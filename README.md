@@ -1,6 +1,6 @@
 # yams-symspell
 
-Modern C++20/23 implementation of the SymSpell algorithm for fast fuzzy string matching and spelling correction.
+Modern implementation of the SymSpell algorithm for fast fuzzy string matching and spelling correction.
 
 ## Overview
 
