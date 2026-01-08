@@ -1,0 +1,57 @@
+CompileFlags:
+  Add:
+    - -std=c++20
+    - -Iinclude
+    - -I../../include
+    - -stdlib=libc++
+    - -Wall
+    - -Wextra
+  Remove:
+    - -Werror
+
+  Compiler: clang++
+
+Diagnostics:
+  ClangTidy:
+    CheckPrefixes:
+      - bugprone-
+      - performance-
+      - portability-
+      - readabi-
+    HeadersFilter: include/.*
+
+Index:
+  Background: Build
+  StandardLibrary: Yes
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+
+Hover:
+  ShowAKA: Yes
+
+CodeCompletion:
+  DetailedSnippet: Yes
+
+Interpretation:
+  # Enable experimental features if available
+  # Uncomment for C++23 features
+  # - -std=c++23
+
+---
+If:
+  PathMatch: tests/.*
+CompileFlags:
+  Add:
+    - -O0
+    - -g
+
+---
+If:
+  PathMatch: benchmarks/.*
+CompileFlags:
+  Add:
+    - -O3
+    - -DNDEBUG
