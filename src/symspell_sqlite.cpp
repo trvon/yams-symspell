@@ -1,7 +1,6 @@
 #include <cstring>
 #include <iostream>
 #include <symspell/symspell_sqlite.hpp>
-#include <yams/core/types.h>
 
 namespace yams::symspell {
 

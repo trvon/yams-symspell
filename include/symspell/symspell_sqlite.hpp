@@ -5,9 +5,13 @@
 #include <string>
 #include <vector>
 #include <symspell/symspell.hpp>
-#include <yams/core/types.h>
+#include <symspell/result.hpp>
 
 namespace yams::symspell {
+
+using yams::symspell::Result;
+using yams::symspell::Error;
+using yams::symspell::ErrorCode;
 
 class SQLiteStore : public ISymSpellStore {
 public:
