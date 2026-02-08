@@ -14,7 +14,6 @@ symspell_test_exe = executable(
     sqlite_vec_cpp_dep,
   ],
   link_with: symspell_sqlite_lib,
-  cpp_args: ['-g', '-O0'],
 )
 
 test('symspell_test', symspell_test_exe)

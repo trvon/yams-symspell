@@ -14,7 +14,6 @@ symspell_bench_exe = executable(
     sqlite_vec_cpp_dep,
   ],
   link_with: symspell_sqlite_lib,
-  cpp_args: ['-O3', '-DNDEBUG'],
 )
 
 test('symspell_bench', symspell_bench_exe, is_parallel: false)
