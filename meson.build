@@ -22,7 +22,7 @@ symspell_inc = include_directories('include')
 symspell_sqlite_lib = static_library(
   'yams_symspell_sqlite',
   [files('src/symspell_sqlite.cpp')],
-  include_directories: symspell_inc,
+  include_directories: [symspell_inc],
   dependencies: [sqlite3_dep],
   install: false,
 )
