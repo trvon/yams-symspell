@@ -35,8 +35,7 @@ public:
 
 class MemoryStore : public ISymSpellStore {
 public:
-    explicit MemoryStore(int maxEditDistance = 2, int prefixLength = 7)
-        : maxEditDistance_(maxEditDistance), prefixLength_(prefixLength) {}
+    explicit MemoryStore(int = 2, int = 7) {}
 
     void addDelete(int hash, std::string_view term) override {
         deletes_[hash].push_back(std::string(term));
@@ -65,8 +64,6 @@ public:
     bool termExists(std::string_view term) override { return words_.contains(std::string(term)); }
 
 private:
-    int maxEditDistance_;
-    int prefixLength_;
     std::unordered_map<int, std::vector<std::string>> deletes_;
     std::unordered_map<std::string, int64_t> words_;
 };
