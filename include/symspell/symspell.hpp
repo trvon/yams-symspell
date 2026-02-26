@@ -81,7 +81,7 @@ public:
 
         auto it = belowThresholdWords_.find(std::string(key));
         if (it != belowThresholdWords_.end()) {
-            count = std::min<int64_t>(INT64_MAX - it->second, it->second + count);
+            count = saturatingAdd(it->second, count);
             if (count >= countThreshold_) {
                 belowThresholdWords_.erase(it);
             } else {
@@ -91,7 +91,7 @@ public:
         } else {
             auto freq = store_->getFrequency(key);
             if (freq.has_value()) {
-                count = std::min<int64_t>(INT64_MAX - *freq, *freq + count);
+                count = saturatingAdd(*freq, count);
                 store_->setFrequency(key, count);
                 return false;
             } else if (count < countThreshold_) {
@@ -285,6 +285,16 @@ public:
     int maxWordLength() const { return maxDictionaryWordLength_; }
 
 private:
+    static int64_t saturatingAdd(int64_t lhs, int64_t rhs) {
+        if (rhs <= 0) {
+            return lhs;
+        }
+        if (lhs >= INT64_MAX - rhs) {
+            return INT64_MAX;
+        }
+        return lhs + rhs;
+    }
+
     static uint32_t calculateCompactMask(int compactLevel) {
         if (compactLevel > 16) {
             return 0xFFFFFFFF;

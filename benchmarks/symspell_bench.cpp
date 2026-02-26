@@ -100,7 +100,7 @@ private:
         std::vector<std::thread> threads;
 
         for (int t = 0; t < 4; ++t) {
-            threads.emplace_back([&spell, t]() {
+            threads.emplace_back([&spell]() {
                 for (int i = 0; i < 250; ++i) {
                     spell.lookup("wrod" + std::to_string(i), Verbosity::Closest);
                 }
