@@ -17,7 +17,11 @@ symspell_bench_exe = executable(
 )
 
 symspell_bench_timeout = get_option('bench-timeout')
-if symspell_bench_timeout < 180
+if get_option('enable-tsan') or get_option('enable-asan')
+  if symspell_bench_timeout < 600
+    symspell_bench_timeout = 600
+  endif
+elif symspell_bench_timeout < 180
   symspell_bench_timeout = 180
 endif
 
