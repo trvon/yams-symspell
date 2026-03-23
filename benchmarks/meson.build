@@ -16,4 +16,12 @@ symspell_bench_exe = executable(
   link_with: symspell_sqlite_lib,
 )
 
-test('symspell_bench', symspell_bench_exe, is_parallel: false)
+symspell_bench_timeout = get_option('bench-timeout')
+if symspell_bench_timeout < 180
+  symspell_bench_timeout = 180
+endif
+
+test('symspell_bench', symspell_bench_exe,
+  is_parallel: false,
+  timeout: symspell_bench_timeout,
+)

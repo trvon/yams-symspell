@@ -164,8 +164,9 @@ void testSQLiteStore() {
     std::cout << "Running testSQLiteStore... " << std::flush;
 
     sqlite3* db;
-    int rc = sqlite3_open(":memory:", &db);
+    const int rc = sqlite3_open(":memory:", &db);
     assert(rc == SQLITE_OK);
+    (void)rc;
 
     auto initResult = SQLiteStore::initializeDatabase(db);
     assert(initResult);
@@ -193,8 +194,9 @@ void testSQLitePersistence() {
 
     {
         sqlite3* db;
-        int rc = sqlite3_open(path, &db);
+        const int rc = sqlite3_open(path, &db);
         assert(rc == SQLITE_OK);
+        (void)rc;
 
         auto initResult = SQLiteStore::initializeDatabase(db);
         assert(initResult);
@@ -210,8 +212,9 @@ void testSQLitePersistence() {
 
     {
         sqlite3* db;
-        int rc = sqlite3_open(path, &db);
+        const int rc = sqlite3_open(path, &db);
         assert(rc == SQLITE_OK);
+        (void)rc;
 
         auto store = std::make_unique<SQLiteStore>(db, 2, 7);
         SymSpell spell(std::move(store), 2, 7);

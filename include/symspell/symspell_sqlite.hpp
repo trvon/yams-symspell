@@ -31,9 +31,9 @@ public:
     std::optional<int64_t> getFrequency(std::string_view term) override;
     bool termExists(std::string_view term) override;
 
-    void beginTransaction();
-    void commitTransaction();
-    void rollbackTransaction();
+    void beginTransaction() override;
+    void commitTransaction() override;
+    void rollbackTransaction() override;
 
 private:
     sqlite3* db_;

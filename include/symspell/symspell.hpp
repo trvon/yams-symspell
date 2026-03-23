@@ -31,6 +31,9 @@ public:
     virtual void setFrequency(std::string_view term, int64_t freq) = 0;
     virtual std::optional<int64_t> getFrequency(std::string_view term) = 0;
     virtual bool termExists(std::string_view term) = 0;
+    virtual void beginTransaction() {}
+    virtual void commitTransaction() {}
+    virtual void rollbackTransaction() {}
 };
 
 class MemoryStore : public ISymSpellStore {
@@ -73,6 +76,14 @@ public:
     SymSpell(std::unique_ptr<ISymSpellStore> store, int maxEditDistance = 2, int prefixLength = 7)
         : store_(std::move(store)), maxEditDistance_(maxEditDistance), prefixLength_(prefixLength),
           compactMask_(calculateCompactMask(5)), maxDictionaryWordLength_(0) {}
+
+    bool termExists(std::string_view term) const { return store_->termExists(term); }
+
+    void beginTransaction() { store_->beginTransaction(); }
+
+    void commitTransaction() { store_->commitTransaction(); }
+
+    void rollbackTransaction() { store_->rollbackTransaction(); }
 
     bool createDictionaryEntry(std::string_view key, int64_t count = 1) {
         if (count <= 0) {
