@@ -4,18 +4,18 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <symspell/symspell.hpp>
 #include <symspell/result.hpp>
+#include <symspell/symspell.hpp>
 
 namespace yams::symspell {
 
-using yams::symspell::Result;
 using yams::symspell::Error;
 using yams::symspell::ErrorCode;
+using yams::symspell::Result;
 
 class SQLiteStore : public ISymSpellStore {
 public:
-    SQLiteStore(sqlite3* db, int maxEditDistance = 2, int prefixLength = 7);
+    SQLiteStore(sqlite3* db, int maxEditDistance = 2, int prefixLength = 7, bool readOnly = false);
     ~SQLiteStore() override;
 
     SQLiteStore(const SQLiteStore&) = delete;
@@ -43,6 +43,7 @@ private:
     sqlite3_stmt* getFrequencyStmt_ = nullptr;
     sqlite3_stmt* termExistsStmt_ = nullptr;
     bool inTransaction_ = false;
+    bool readOnly_ = false;
 
     Result<void> prepareStatements();
     void finalizeStatements();

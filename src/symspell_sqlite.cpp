@@ -89,7 +89,8 @@ Result<void> SQLiteStore::initializeDatabase(sqlite3* db) {
     return Result<void>();
 }
 
-SQLiteStore::SQLiteStore(sqlite3* db, int maxEditDistance, int prefixLength) : db_(db) {
+SQLiteStore::SQLiteStore(sqlite3* db, int maxEditDistance, int prefixLength, bool readOnly)
+    : db_(db), readOnly_(readOnly) {
     (void)maxEditDistance;
     (void)prefixLength;
     auto result = prepareStatements();
@@ -103,17 +104,19 @@ SQLiteStore::~SQLiteStore() {
 }
 
 Result<void> SQLiteStore::prepareStatements() {
-    if (sqlite3_prepare_v2(db_, kInsertOrUpdateTerm, -1, &setFrequencyStmt_, nullptr) !=
-        SQLITE_OK) {
-        return Result<void>(
-            Error(ErrorCode::DatabaseError,
-                  std::string("Failed to prepare setFrequency statement: ") + sqlite3_errmsg(db_)));
-    }
+    if (!readOnly_) {
+        if (sqlite3_prepare_v2(db_, kInsertOrUpdateTerm, -1, &setFrequencyStmt_, nullptr) !=
+            SQLITE_OK) {
+            return Result<void>(Error(ErrorCode::DatabaseError,
+                                      std::string("Failed to prepare setFrequency statement: ") +
+                                          sqlite3_errmsg(db_)));
+        }
 
-    if (sqlite3_prepare_v2(db_, kAddDelete, -1, &addDeleteStmt_, nullptr) != SQLITE_OK) {
-        return Result<void>(
-            Error(ErrorCode::DatabaseError,
-                  std::string("Failed to prepare addDelete statement: ") + sqlite3_errmsg(db_)));
+        if (sqlite3_prepare_v2(db_, kAddDelete, -1, &addDeleteStmt_, nullptr) != SQLITE_OK) {
+            return Result<void>(Error(ErrorCode::DatabaseError,
+                                      std::string("Failed to prepare addDelete statement: ") +
+                                          sqlite3_errmsg(db_)));
+        }
     }
 
     if (sqlite3_prepare_v2(db_, kGetTerms, -1, &getTermsStmt_, nullptr) != SQLITE_OK) {
@@ -161,7 +164,7 @@ void SQLiteStore::finalizeStatements() {
 }
 
 void SQLiteStore::addDelete(int hash, std::string_view term) {
-    if (!addDeleteStmt_) {
+    if (readOnly_ || !addDeleteStmt_) {
         return;
     }
 
@@ -195,7 +198,7 @@ std::vector<std::string> SQLiteStore::getTerms(int hash) {
 }
 
 void SQLiteStore::setFrequency(std::string_view term, int64_t freq) {
-    if (!setFrequencyStmt_) {
+    if (readOnly_ || !setFrequencyStmt_) {
         return;
     }
 
@@ -250,9 +253,13 @@ bool SQLiteStore::termExists(std::string_view term) {
 }
 
 void SQLiteStore::beginTransaction() {
+    if (readOnly_) {
+        return;
+    }
     if (!inTransaction_) {
         char* errMsg = nullptr;
-        if (sqlite3_exec(db_, "BEGIN TRANSACTION", nullptr, nullptr, &errMsg) != SQLITE_OK) {
+        if (sqlite3_exec(db_, "BEGIN IMMEDIATE TRANSACTION", nullptr, nullptr, &errMsg) !=
+            SQLITE_OK) {
             std::cerr << "Failed to begin transaction: " << errMsg << std::endl;
             sqlite3_free(errMsg);
         } else {
@@ -262,19 +269,24 @@ void SQLiteStore::beginTransaction() {
 }
 
 void SQLiteStore::commitTransaction() {
+    if (readOnly_) {
+        return;
+    }
     if (inTransaction_) {
         char* errMsg = nullptr;
         if (sqlite3_exec(db_, "COMMIT", nullptr, nullptr, &errMsg) != SQLITE_OK) {
             std::cerr << "Failed to commit transaction: " << errMsg << std::endl;
             sqlite3_free(errMsg);
             sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
-        } else {
-            inTransaction_ = false;
         }
+        inTransaction_ = false;
     }
 }
 
 void SQLiteStore::rollbackTransaction() {
+    if (readOnly_) {
+        return;
+    }
     if (inTransaction_) {
         sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
         inTransaction_ = false;
