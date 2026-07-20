@@ -25,17 +25,18 @@ public:
 
     static Result<void> initializeDatabase(sqlite3* db);
 
-    void addDelete(int hash, std::string_view term) override;
+    Result<void> addDelete(int hash, std::string_view term) override;
     std::vector<std::string> getTerms(int hash) override;
-    void setFrequency(std::string_view term, int64_t freq) override;
-    void setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
-                                   const std::vector<int>& deleteHashes) override;
+    Result<void> setFrequency(std::string_view term, int64_t freq) override;
+    Result<void> setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                           const std::vector<int>& deleteHashes) override;
     std::optional<int64_t> getFrequency(std::string_view term) override;
     bool termExists(std::string_view term) override;
 
-    void beginTransaction() override;
-    void commitTransaction() override;
-    void rollbackTransaction() override;
+    Result<void> beginTransaction() override;
+    Result<void> commitTransaction() override;
+    Result<void> rollbackTransaction() override;
+    Result<void> clear() override;
 
 private:
     sqlite3* db_;

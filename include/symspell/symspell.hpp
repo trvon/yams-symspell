@@ -11,6 +11,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <symspell/result.hpp>
+
 namespace yams::symspell {
 
 enum class Verbosity { Top, Closest, All };
@@ -27,29 +29,38 @@ class ISymSpellStore {
 public:
     virtual ~ISymSpellStore() = default;
 
-    virtual void addDelete(int hash, std::string_view term) = 0;
+    virtual Result<void> addDelete(int hash, std::string_view term) = 0;
     virtual std::vector<std::string> getTerms(int hash) = 0;
-    virtual void setFrequency(std::string_view term, int64_t freq) = 0;
-    virtual void setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
-                                           const std::vector<int>& deleteHashes) {
-        setFrequency(term, freq);
-        for (const int hash : deleteHashes) {
-            addDelete(hash, term);
+    virtual Result<void> setFrequency(std::string_view term, int64_t freq) = 0;
+    virtual Result<void> setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                                   const std::vector<int>& deleteHashes) {
+        auto frequencyResult = setFrequency(term, freq);
+        if (!frequencyResult) {
+            return frequencyResult.error();
         }
+        for (const int hash : deleteHashes) {
+            auto deleteResult = addDelete(hash, term);
+            if (!deleteResult) {
+                return deleteResult.error();
+            }
+        }
+        return {};
     }
     virtual std::optional<int64_t> getFrequency(std::string_view term) = 0;
     virtual bool termExists(std::string_view term) = 0;
-    virtual void beginTransaction() {}
-    virtual void commitTransaction() {}
-    virtual void rollbackTransaction() {}
+    virtual Result<void> beginTransaction() { return {}; }
+    virtual Result<void> commitTransaction() { return {}; }
+    virtual Result<void> rollbackTransaction() { return {}; }
+    virtual Result<void> clear() = 0;
 };
 
 class MemoryStore : public ISymSpellStore {
 public:
     explicit MemoryStore(int = 2, int = 7) {}
 
-    void addDelete(int hash, std::string_view term) override {
+    Result<void> addDelete(int hash, std::string_view term) override {
         deletes_[hash].push_back(std::string(term));
+        return {};
     }
 
     std::vector<std::string> getTerms(int hash) override {
@@ -60,8 +71,9 @@ public:
         return {};
     }
 
-    void setFrequency(std::string_view term, int64_t freq) override {
+    Result<void> setFrequency(std::string_view term, int64_t freq) override {
         words_[std::string(term)] = freq;
+        return {};
     }
 
     std::optional<int64_t> getFrequency(std::string_view term) override {
@@ -73,6 +85,12 @@ public:
     }
 
     bool termExists(std::string_view term) override { return words_.contains(std::string(term)); }
+
+    Result<void> clear() override {
+        deletes_.clear();
+        words_.clear();
+        return {};
+    }
 
 private:
     std::unordered_map<int, std::vector<std::string>> deletes_;
@@ -87,13 +105,13 @@ public:
 
     bool termExists(std::string_view term) const { return store_->termExists(term); }
 
-    void beginTransaction() { store_->beginTransaction(); }
+    Result<void> beginTransaction() { return store_->beginTransaction(); }
 
-    void commitTransaction() { store_->commitTransaction(); }
+    Result<void> commitTransaction() { return store_->commitTransaction(); }
 
-    void rollbackTransaction() { store_->rollbackTransaction(); }
+    Result<void> rollbackTransaction() { return store_->rollbackTransaction(); }
 
-    bool createDictionaryEntry(std::string_view key, int64_t count = 1) {
+    Result<bool> createDictionaryEntry(std::string_view key, int64_t count = 1) {
         if (count <= 0) {
             return false;
         }
@@ -111,7 +129,10 @@ public:
             auto freq = store_->getFrequency(key);
             if (freq.has_value()) {
                 count = saturatingAdd(*freq, count);
-                store_->setFrequency(key, count);
+                auto result = store_->setFrequency(key, count);
+                if (!result) {
+                    return result.error();
+                }
                 return false;
             } else if (count < countThreshold_) {
                 belowThresholdWords_[std::string(key)] = count;
@@ -129,9 +150,22 @@ public:
         for (const auto& deleteWord : edits) {
             deleteHashes.push_back(getStringHash(deleteWord));
         }
-        store_->setFrequencyAndAddDeletes(key, count, deleteHashes);
+        auto result = store_->setFrequencyAndAddDeletes(key, count, deleteHashes);
+        if (!result) {
+            return result.error();
+        }
 
         return true;
+    }
+
+    Result<void> clear() {
+        auto result = store_->clear();
+        if (!result) {
+            return result.error();
+        }
+        belowThresholdWords_.clear();
+        maxDictionaryWordLength_ = 0;
+        return {};
     }
 
     std::vector<Suggestion> lookup(std::string_view input, Verbosity verbosity = Verbosity::Closest,

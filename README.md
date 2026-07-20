@@ -127,7 +127,7 @@ class SymSpell {
              int maxEditDistance = 2,
              int prefixLength = 7);
     
-    bool createDictionaryEntry(std::string_view key, int64_t count = 1);
+    Result<bool> createDictionaryEntry(std::string_view key, int64_t count = 1);
     std::vector<Suggestion> lookup(std::string_view input,
                                     Verbosity verbosity = Verbosity::Closest,
                                     int maxEditDistance = -1);

@@ -369,6 +369,49 @@ void testPerformance() {
     std::cout << "PASSED" << std::endl;
 }
 
+void testSQLiteWriteFailure() {
+    std::cout << "Running testSQLiteWriteFailure... " << std::flush;
+
+    sqlite3* db = nullptr;
+    assert(sqlite3_open(":memory:", &db) == SQLITE_OK);
+    assert(SQLiteStore::initializeDatabase(db));
+    assert(sqlite3_exec(db,
+                        "CREATE TRIGGER reject_symspell_term BEFORE INSERT ON symspell_terms "
+                        "BEGIN SELECT RAISE(ABORT, 'forced term failure'); END",
+                        nullptr, nullptr, nullptr) == SQLITE_OK);
+
+    {
+        auto store = std::make_unique<SQLiteStore>(db, 2, 7);
+        SymSpell spell(std::move(store), 2, 7);
+        auto inserted = spell.createDictionaryEntry("rejected", 100);
+        assert(!inserted);
+        assert(!spell.termExists("rejected"));
+    }
+    assert(sqlite3_close(db) == SQLITE_OK);
+
+    std::cout << "PASSED" << std::endl;
+}
+
+void testSQLiteClear() {
+    std::cout << "Running testSQLiteClear... " << std::flush;
+
+    sqlite3* db = nullptr;
+    assert(sqlite3_open(":memory:", &db) == SQLITE_OK);
+    assert(SQLiteStore::initializeDatabase(db));
+
+    {
+        auto store = std::make_unique<SQLiteStore>(db, 2, 7);
+        SymSpell spell(std::move(store), 2, 7);
+        assert(spell.createDictionaryEntry("temporary", 100));
+        assert(spell.termExists("temporary"));
+        assert(spell.clear());
+        assert(!spell.termExists("temporary"));
+    }
+    assert(sqlite3_close(db) == SQLITE_OK);
+
+    std::cout << "PASSED" << std::endl;
+}
+
 int main() {
     std::cout << "=== SymSpell Tests ===" << std::endl;
 
@@ -390,6 +433,8 @@ int main() {
     testDamerauLevenshtein();
     testUnicode();
     testPerformance();
+    testSQLiteWriteFailure();
+    testSQLiteClear();
 
     std::cout << "\n=== All Tests PASSED ===" << std::endl;
 

@@ -1,5 +1,4 @@
 #include <cstring>
-#include <iostream>
 #include <symspell/symspell_sqlite.hpp>
 
 namespace yams::symspell {
@@ -61,6 +60,24 @@ constexpr const char* kTermExists = R"(
     SELECT 1 FROM symspell_terms WHERE term = ? LIMIT 1
 )";
 
+Result<void> executeSql(sqlite3* db, const char* sql, std::string_view operation) {
+    char* errorMessage = nullptr;
+    const int rc = sqlite3_exec(db, sql, nullptr, nullptr, &errorMessage);
+    if (rc == SQLITE_OK) {
+        return {};
+    }
+
+    std::string message(operation);
+    message += ": ";
+    message += errorMessage != nullptr ? errorMessage : sqlite3_errmsg(db);
+    sqlite3_free(errorMessage);
+    return Error{ErrorCode::DatabaseError, std::move(message)};
+}
+
+Error statementError(sqlite3* db, std::string_view operation) {
+    return Error{ErrorCode::DatabaseError, std::string(operation) + ": " + sqlite3_errmsg(db)};
+}
+
 } // namespace
 
 Result<void> SQLiteStore::initializeDatabase(sqlite3* db) {
@@ -84,12 +101,14 @@ Result<void> SQLiteStore::initializeDatabase(sqlite3* db) {
         std::string msg = "Failed to create terms index: ";
         msg += errMsg;
         sqlite3_free(errMsg);
+        return Result<void>(Error(ErrorCode::DatabaseError, std::move(msg)));
     }
 
     if (sqlite3_exec(db, kCreateDeletesHashIndex, nullptr, nullptr, &errMsg) != SQLITE_OK) {
         std::string msg = "Failed to create deletes hash index: ";
         msg += errMsg;
         sqlite3_free(errMsg);
+        return Result<void>(Error(ErrorCode::DatabaseError, std::move(msg)));
     }
 
     return Result<void>();
@@ -106,6 +125,9 @@ SQLiteStore::SQLiteStore(sqlite3* db, int maxEditDistance, int prefixLength, boo
 }
 
 SQLiteStore::~SQLiteStore() {
+    if (inTransaction_) {
+        (void)rollbackTransaction();
+    }
     finalizeStatements();
 }
 
@@ -180,17 +202,33 @@ void SQLiteStore::finalizeStatements() {
     }
 }
 
-void SQLiteStore::addDelete(int hash, std::string_view term) {
-    if (readOnly_ || !addDeleteStmt_) {
-        return;
+Result<void> SQLiteStore::addDelete(int hash, std::string_view term) {
+    if (readOnly_) {
+        return Error{ErrorCode::DatabaseError, "Cannot add a delete key to a read-only store"};
+    }
+    if (!addDeleteStmt_) {
+        return Error{ErrorCode::InternalError, "Delete-key statement is not prepared"};
     }
 
-    sqlite3_bind_int(addDeleteStmt_, 1, hash);
-    sqlite3_bind_text(addDeleteStmt_, 2, term.data(), static_cast<int>(term.size()), SQLITE_STATIC);
+    const auto resetStatement = [&] {
+        sqlite3_reset(addDeleteStmt_);
+        sqlite3_clear_bindings(addDeleteStmt_);
+    };
+    if (sqlite3_bind_int(addDeleteStmt_, 1, hash) != SQLITE_OK ||
+        sqlite3_bind_text(addDeleteStmt_, 2, term.data(), static_cast<int>(term.size()),
+                          SQLITE_TRANSIENT) != SQLITE_OK) {
+        auto error = statementError(db_, "Failed to bind delete key");
+        resetStatement();
+        return error;
+    }
 
-    sqlite3_step(addDeleteStmt_);
-    sqlite3_reset(addDeleteStmt_);
-    sqlite3_clear_bindings(addDeleteStmt_);
+    if (sqlite3_step(addDeleteStmt_) != SQLITE_DONE) {
+        auto error = statementError(db_, "Failed to add delete key");
+        resetStatement();
+        return error;
+    }
+    resetStatement();
+    return {};
 }
 
 std::vector<std::string> SQLiteStore::getTerms(int hash) {
@@ -214,47 +252,119 @@ std::vector<std::string> SQLiteStore::getTerms(int hash) {
     return result;
 }
 
-void SQLiteStore::setFrequency(std::string_view term, int64_t freq) {
-    if (readOnly_ || !setFrequencyStmt_) {
-        return;
+Result<void> SQLiteStore::setFrequency(std::string_view term, int64_t freq) {
+    if (readOnly_) {
+        return Error{ErrorCode::DatabaseError, "Cannot set frequency on a read-only store"};
+    }
+    if (!setFrequencyStmt_) {
+        return Error{ErrorCode::InternalError, "Frequency statement is not prepared"};
     }
 
-    sqlite3_bind_text(setFrequencyStmt_, 1, term.data(), static_cast<int>(term.size()),
-                      SQLITE_STATIC);
-    sqlite3_bind_int64(setFrequencyStmt_, 2, freq);
+    const auto resetStatement = [&] {
+        sqlite3_reset(setFrequencyStmt_);
+        sqlite3_clear_bindings(setFrequencyStmt_);
+    };
+    if (sqlite3_bind_text(setFrequencyStmt_, 1, term.data(), static_cast<int>(term.size()),
+                          SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_bind_int64(setFrequencyStmt_, 2, freq) != SQLITE_OK) {
+        auto error = statementError(db_, "Failed to bind term frequency");
+        resetStatement();
+        return error;
+    }
 
-    sqlite3_step(setFrequencyStmt_);
-    sqlite3_reset(setFrequencyStmt_);
-    sqlite3_clear_bindings(setFrequencyStmt_);
+    if (sqlite3_step(setFrequencyStmt_) != SQLITE_ROW ||
+        sqlite3_step(setFrequencyStmt_) != SQLITE_DONE) {
+        auto error = statementError(db_, "Failed to set term frequency");
+        resetStatement();
+        return error;
+    }
+    resetStatement();
+    return {};
 }
 
-void SQLiteStore::setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
-                                            const std::vector<int>& deleteHashes) {
-    if (readOnly_ || !setFrequencyStmt_ || !addDeleteByIdStmt_) {
-        return;
+Result<void> SQLiteStore::setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                                    const std::vector<int>& deleteHashes) {
+    if (readOnly_) {
+        return Error{ErrorCode::DatabaseError, "Cannot add a term to a read-only store"};
+    }
+    if (!setFrequencyStmt_ || !addDeleteByIdStmt_) {
+        return Error{ErrorCode::InternalError, "Term insertion statements are not prepared"};
     }
 
-    sqlite3_bind_text(setFrequencyStmt_, 1, term.data(), static_cast<int>(term.size()),
-                      SQLITE_STATIC);
-    sqlite3_bind_int64(setFrequencyStmt_, 2, freq);
+    auto savepoint =
+        executeSql(db_, "SAVEPOINT symspell_dictionary_entry", "Failed to begin term insertion");
+    if (!savepoint) {
+        return savepoint.error();
+    }
+    const auto rollback = [&] {
+        (void)executeSql(db_, "ROLLBACK TO symspell_dictionary_entry",
+                         "Failed to roll back term insertion");
+        (void)executeSql(db_, "RELEASE symspell_dictionary_entry",
+                         "Failed to release term insertion savepoint");
+    };
+    const auto resetFrequencyStatement = [&] {
+        sqlite3_reset(setFrequencyStmt_);
+        sqlite3_clear_bindings(setFrequencyStmt_);
+    };
+    const auto resetDeleteStatement = [&] {
+        sqlite3_reset(addDeleteByIdStmt_);
+        sqlite3_clear_bindings(addDeleteByIdStmt_);
+    };
+
+    if (sqlite3_bind_text(setFrequencyStmt_, 1, term.data(), static_cast<int>(term.size()),
+                          SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_bind_int64(setFrequencyStmt_, 2, freq) != SQLITE_OK) {
+        auto error = statementError(db_, "Failed to bind dictionary term");
+        resetFrequencyStatement();
+        rollback();
+        return error;
+    }
 
     int64_t termId = 0;
     if (sqlite3_step(setFrequencyStmt_) == SQLITE_ROW) {
         termId = sqlite3_column_int64(setFrequencyStmt_, 0);
+    } else {
+        auto error = statementError(db_, "Failed to store dictionary term");
+        resetFrequencyStatement();
+        rollback();
+        return error;
     }
-    sqlite3_reset(setFrequencyStmt_);
-    sqlite3_clear_bindings(setFrequencyStmt_);
+    if (sqlite3_step(setFrequencyStmt_) != SQLITE_DONE) {
+        auto error = statementError(db_, "Failed to finish storing dictionary term");
+        resetFrequencyStatement();
+        rollback();
+        return error;
+    }
+    resetFrequencyStatement();
     if (termId <= 0) {
-        return;
+        rollback();
+        return Error{ErrorCode::DatabaseError, "Stored dictionary term has no row identifier"};
     }
 
     for (const int hash : deleteHashes) {
-        sqlite3_bind_int(addDeleteByIdStmt_, 1, hash);
-        sqlite3_bind_int64(addDeleteByIdStmt_, 2, termId);
-        sqlite3_step(addDeleteByIdStmt_);
-        sqlite3_reset(addDeleteByIdStmt_);
-        sqlite3_clear_bindings(addDeleteByIdStmt_);
+        if (sqlite3_bind_int(addDeleteByIdStmt_, 1, hash) != SQLITE_OK ||
+            sqlite3_bind_int64(addDeleteByIdStmt_, 2, termId) != SQLITE_OK) {
+            auto error = statementError(db_, "Failed to bind dictionary delete key");
+            resetDeleteStatement();
+            rollback();
+            return error;
+        }
+        if (sqlite3_step(addDeleteByIdStmt_) != SQLITE_DONE) {
+            auto error = statementError(db_, "Failed to store dictionary delete key");
+            resetDeleteStatement();
+            rollback();
+            return error;
+        }
+        resetDeleteStatement();
     }
+
+    auto release =
+        executeSql(db_, "RELEASE symspell_dictionary_entry", "Failed to commit term insertion");
+    if (!release) {
+        rollback();
+        return release.error();
+    }
+    return {};
 }
 
 std::optional<int64_t> SQLiteStore::getFrequency(std::string_view term) {
@@ -298,45 +408,84 @@ bool SQLiteStore::termExists(std::string_view term) {
     return exists;
 }
 
-void SQLiteStore::beginTransaction() {
+Result<void> SQLiteStore::beginTransaction() {
     if (readOnly_) {
-        return;
+        return Error{ErrorCode::DatabaseError, "Cannot begin a transaction on a read-only store"};
+    }
+    if (inTransaction_) {
+        return {};
+    }
+
+    auto result = executeSql(db_, "BEGIN IMMEDIATE TRANSACTION", "Failed to begin transaction");
+    if (!result) {
+        return result.error();
+    }
+    inTransaction_ = true;
+    return {};
+}
+
+Result<void> SQLiteStore::commitTransaction() {
+    if (readOnly_) {
+        return Error{ErrorCode::DatabaseError, "Cannot commit a transaction on a read-only store"};
     }
     if (!inTransaction_) {
-        char* errMsg = nullptr;
-        if (sqlite3_exec(db_, "BEGIN IMMEDIATE TRANSACTION", nullptr, nullptr, &errMsg) !=
-            SQLITE_OK) {
-            std::cerr << "Failed to begin transaction: " << errMsg << std::endl;
-            sqlite3_free(errMsg);
-        } else {
-            inTransaction_ = true;
-        }
+        return {};
     }
+
+    auto result = executeSql(db_, "COMMIT", "Failed to commit transaction");
+    if (!result) {
+        (void)executeSql(db_, "ROLLBACK", "Failed to roll back transaction");
+        inTransaction_ = false;
+        return result.error();
+    }
+    inTransaction_ = false;
+    return {};
 }
 
-void SQLiteStore::commitTransaction() {
+Result<void> SQLiteStore::rollbackTransaction() {
     if (readOnly_) {
-        return;
+        return Error{ErrorCode::DatabaseError,
+                     "Cannot roll back a transaction on a read-only store"};
     }
-    if (inTransaction_) {
-        char* errMsg = nullptr;
-        if (sqlite3_exec(db_, "COMMIT", nullptr, nullptr, &errMsg) != SQLITE_OK) {
-            std::cerr << "Failed to commit transaction: " << errMsg << std::endl;
-            sqlite3_free(errMsg);
-            sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
-        }
-        inTransaction_ = false;
+    if (!inTransaction_) {
+        return {};
     }
+
+    auto result = executeSql(db_, "ROLLBACK", "Failed to roll back transaction");
+    inTransaction_ = false;
+    return result;
 }
 
-void SQLiteStore::rollbackTransaction() {
+Result<void> SQLiteStore::clear() {
     if (readOnly_) {
-        return;
+        return Error{ErrorCode::DatabaseError, "Cannot clear a read-only store"};
     }
-    if (inTransaction_) {
-        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
-        inTransaction_ = false;
+
+    auto savepoint = executeSql(db_, "SAVEPOINT symspell_clear", "Failed to begin store clear");
+    if (!savepoint) {
+        return savepoint.error();
     }
+    const auto rollback = [&] {
+        (void)executeSql(db_, "ROLLBACK TO symspell_clear", "Failed to roll back store clear");
+        (void)executeSql(db_, "RELEASE symspell_clear", "Failed to release clear savepoint");
+    };
+
+    auto deletes = executeSql(db_, "DELETE FROM symspell_deletes", "Failed to clear delete keys");
+    if (!deletes) {
+        rollback();
+        return deletes.error();
+    }
+    auto terms = executeSql(db_, "DELETE FROM symspell_terms", "Failed to clear terms");
+    if (!terms) {
+        rollback();
+        return terms.error();
+    }
+    auto release = executeSql(db_, "RELEASE symspell_clear", "Failed to commit store clear");
+    if (!release) {
+        rollback();
+        return release.error();
+    }
+    return {};
 }
 
 } // namespace yams::symspell
