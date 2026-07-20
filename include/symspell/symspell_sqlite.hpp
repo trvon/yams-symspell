@@ -28,6 +28,8 @@ public:
     void addDelete(int hash, std::string_view term) override;
     std::vector<std::string> getTerms(int hash) override;
     void setFrequency(std::string_view term, int64_t freq) override;
+    void setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                   const std::vector<int>& deleteHashes) override;
     std::optional<int64_t> getFrequency(std::string_view term) override;
     bool termExists(std::string_view term) override;
 
@@ -38,6 +40,7 @@ public:
 private:
     sqlite3* db_;
     sqlite3_stmt* addDeleteStmt_ = nullptr;
+    sqlite3_stmt* addDeleteByIdStmt_ = nullptr;
     sqlite3_stmt* getTermsStmt_ = nullptr;
     sqlite3_stmt* setFrequencyStmt_ = nullptr;
     sqlite3_stmt* getFrequencyStmt_ = nullptr;

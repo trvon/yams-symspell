@@ -30,6 +30,13 @@ public:
     virtual void addDelete(int hash, std::string_view term) = 0;
     virtual std::vector<std::string> getTerms(int hash) = 0;
     virtual void setFrequency(std::string_view term, int64_t freq) = 0;
+    virtual void setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                           const std::vector<int>& deleteHashes) {
+        setFrequency(term, freq);
+        for (const int hash : deleteHashes) {
+            addDelete(hash, term);
+        }
+    }
     virtual std::optional<int64_t> getFrequency(std::string_view term) = 0;
     virtual bool termExists(std::string_view term) = 0;
     virtual void beginTransaction() {}
@@ -112,16 +119,17 @@ public:
             }
         }
 
-        store_->setFrequency(key, count);
         if (key.size() > static_cast<size_t>(maxDictionaryWordLength_)) {
             maxDictionaryWordLength_ = static_cast<int>(key.size());
         }
 
         auto edits = editsPrefix(key);
+        std::vector<int> deleteHashes;
+        deleteHashes.reserve(edits.size());
         for (const auto& deleteWord : edits) {
-            int deleteHash = getStringHash(deleteWord);
-            store_->addDelete(deleteHash, key);
+            deleteHashes.push_back(getStringHash(deleteWord));
         }
+        store_->setFrequencyAndAddDeletes(key, count, deleteHashes);
 
         return true;
     }

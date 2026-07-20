@@ -187,6 +187,32 @@ void testSQLiteStore() {
     std::cout << "PASSED" << std::endl;
 }
 
+void testSQLiteFrequencyAccumulation() {
+    std::cout << "Running testSQLiteFrequencyAccumulation... " << std::flush;
+
+    sqlite3* db;
+    const int rc = sqlite3_open(":memory:", &db);
+    assert(rc == SQLITE_OK);
+    (void)rc;
+
+    auto initResult = SQLiteStore::initializeDatabase(db);
+    assert(initResult);
+
+    auto store = std::make_unique<SQLiteStore>(db, 2, 7);
+    SymSpell spell(std::move(store), 2, 7);
+
+    spell.createDictionaryEntry("test", 100);
+    spell.createDictionaryEntry("test", 50);
+
+    auto suggestions = spell.lookup("test", Verbosity::Closest);
+    assert(!suggestions.empty());
+    assert(suggestions[0].frequency == 150);
+
+    sqlite3_close(db);
+
+    std::cout << "PASSED" << std::endl;
+}
+
 void testSQLitePersistence() {
     std::cout << "Running testSQLitePersistence... " << std::flush;
 
@@ -356,6 +382,7 @@ int main() {
     testNoSuggestions();
     testMaxEditDistance();
     testSQLiteStore();
+    testSQLiteFrequencyAccumulation();
     testSQLitePersistence();
     testConcurrentAccess();
     testLongWord();

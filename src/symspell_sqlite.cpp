@@ -31,14 +31,20 @@ constexpr const char* kCreateDeletesHashIndex = R"(
     CREATE INDEX IF NOT EXISTS idx_symspell_deletes_hash ON symspell_deletes(delete_hash)
 )";
 
-constexpr const char* kInsertOrUpdateTerm = R"(
+constexpr const char* kSetTermFrequency = R"(
     INSERT INTO symspell_terms (term, frequency) VALUES (?, ?)
-    ON CONFLICT(term) DO UPDATE SET frequency = frequency + excluded.frequency
+    ON CONFLICT(term) DO UPDATE SET frequency = excluded.frequency
+    RETURNING id
 )";
 
 constexpr const char* kAddDelete = R"(
     INSERT OR IGNORE INTO symspell_deletes (delete_hash, term_id)
     VALUES (?, (SELECT id FROM symspell_terms WHERE term = ?))
+)";
+
+constexpr const char* kAddDeleteById = R"(
+    INSERT OR IGNORE INTO symspell_deletes (delete_hash, term_id)
+    VALUES (?, ?)
 )";
 
 constexpr const char* kGetTerms = R"(
@@ -105,7 +111,7 @@ SQLiteStore::~SQLiteStore() {
 
 Result<void> SQLiteStore::prepareStatements() {
     if (!readOnly_) {
-        if (sqlite3_prepare_v2(db_, kInsertOrUpdateTerm, -1, &setFrequencyStmt_, nullptr) !=
+        if (sqlite3_prepare_v2(db_, kSetTermFrequency, -1, &setFrequencyStmt_, nullptr) !=
             SQLITE_OK) {
             return Result<void>(Error(ErrorCode::DatabaseError,
                                       std::string("Failed to prepare setFrequency statement: ") +
@@ -115,6 +121,13 @@ Result<void> SQLiteStore::prepareStatements() {
         if (sqlite3_prepare_v2(db_, kAddDelete, -1, &addDeleteStmt_, nullptr) != SQLITE_OK) {
             return Result<void>(Error(ErrorCode::DatabaseError,
                                       std::string("Failed to prepare addDelete statement: ") +
+                                          sqlite3_errmsg(db_)));
+        }
+
+        if (sqlite3_prepare_v2(db_, kAddDeleteById, -1, &addDeleteByIdStmt_, nullptr) !=
+            SQLITE_OK) {
+            return Result<void>(Error(ErrorCode::DatabaseError,
+                                      std::string("Failed to prepare addDeleteById statement: ") +
                                           sqlite3_errmsg(db_)));
         }
     }
@@ -148,6 +161,10 @@ void SQLiteStore::finalizeStatements() {
     if (addDeleteStmt_) {
         sqlite3_finalize(addDeleteStmt_);
         addDeleteStmt_ = nullptr;
+    }
+    if (addDeleteByIdStmt_) {
+        sqlite3_finalize(addDeleteByIdStmt_);
+        addDeleteByIdStmt_ = nullptr;
     }
     if (getTermsStmt_) {
         sqlite3_finalize(getTermsStmt_);
@@ -209,6 +226,35 @@ void SQLiteStore::setFrequency(std::string_view term, int64_t freq) {
     sqlite3_step(setFrequencyStmt_);
     sqlite3_reset(setFrequencyStmt_);
     sqlite3_clear_bindings(setFrequencyStmt_);
+}
+
+void SQLiteStore::setFrequencyAndAddDeletes(std::string_view term, int64_t freq,
+                                            const std::vector<int>& deleteHashes) {
+    if (readOnly_ || !setFrequencyStmt_ || !addDeleteByIdStmt_) {
+        return;
+    }
+
+    sqlite3_bind_text(setFrequencyStmt_, 1, term.data(), static_cast<int>(term.size()),
+                      SQLITE_STATIC);
+    sqlite3_bind_int64(setFrequencyStmt_, 2, freq);
+
+    int64_t termId = 0;
+    if (sqlite3_step(setFrequencyStmt_) == SQLITE_ROW) {
+        termId = sqlite3_column_int64(setFrequencyStmt_, 0);
+    }
+    sqlite3_reset(setFrequencyStmt_);
+    sqlite3_clear_bindings(setFrequencyStmt_);
+    if (termId <= 0) {
+        return;
+    }
+
+    for (const int hash : deleteHashes) {
+        sqlite3_bind_int(addDeleteByIdStmt_, 1, hash);
+        sqlite3_bind_int64(addDeleteByIdStmt_, 2, termId);
+        sqlite3_step(addDeleteByIdStmt_);
+        sqlite3_reset(addDeleteByIdStmt_);
+        sqlite3_clear_bindings(addDeleteByIdStmt_);
+    }
 }
 
 std::optional<int64_t> SQLiteStore::getFrequency(std::string_view term) {
