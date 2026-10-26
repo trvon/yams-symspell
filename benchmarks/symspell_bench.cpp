@@ -10,6 +10,16 @@
 #include <symspell/symspell.hpp>
 #include <symspell/symspell_sqlite.hpp>
 
+namespace {
+// Closes the connection when the scope ends. Declare it right after sqlite3_open so it is
+// destroyed after the SQLiteStore: sqlite3_close() refuses to close a connection whose prepared
+// statements are still live, and the store only finalizes them in its destructor.
+struct SqliteCloser {
+    sqlite3* db;
+    ~SqliteCloser() { sqlite3_close(db); }
+};
+} // namespace
+
 using namespace yams::symspell;
 
 class Benchmark {
@@ -124,6 +134,7 @@ private:
         {
             sqlite3* db;
             sqlite3_open(path, &db);
+            SqliteCloser closeDb{db};
 
             auto initResult = SQLiteStore::initializeDatabase(db);
             auto store = std::make_unique<SQLiteStore>(db, 2, 7);
@@ -144,12 +155,12 @@ private:
             printResult("Create 1,000 entries (SQLite)",
                         std::chrono::duration_cast<std::chrono::microseconds>(end - start));
 
-            sqlite3_close(db);
         }
 
         {
             sqlite3* db;
             sqlite3_open(path, &db);
+            SqliteCloser closeDb{db};
 
             auto store = std::make_unique<SQLiteStore>(db, 2, 7);
             SymSpell spell(std::move(store), 2, 7);
@@ -163,7 +174,6 @@ private:
             printResult("10,000 lookups (SQLite)",
                         std::chrono::duration_cast<std::chrono::microseconds>(end - start));
 
-            sqlite3_close(db);
         }
 
         std::remove(path);

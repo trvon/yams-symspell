@@ -9,6 +9,16 @@
 #include <symspell/symspell.hpp>
 #include <symspell/symspell_sqlite.hpp>
 
+namespace {
+// Closes the connection when the scope ends. Declare it right after sqlite3_open so it is
+// destroyed after the SQLiteStore: sqlite3_close() refuses to close a connection whose prepared
+// statements are still live, and the store only finalizes them in its destructor.
+struct SqliteCloser {
+    sqlite3* db;
+    ~SqliteCloser() { sqlite3_close(db); }
+};
+} // namespace
+
 using namespace yams::symspell;
 
 void testBasicLookup() {
@@ -165,6 +175,7 @@ void testSQLiteStore() {
 
     sqlite3* db;
     const int rc = sqlite3_open(":memory:", &db);
+    SqliteCloser closeDb{db};
     assert(rc == SQLITE_OK);
     (void)rc;
 
@@ -182,7 +193,6 @@ void testSQLiteStore() {
     assert(!suggestions.empty());
     assert(suggestions[0].term == "hello");
 
-    sqlite3_close(db);
 
     std::cout << "PASSED" << std::endl;
 }
@@ -192,6 +202,7 @@ void testSQLiteFrequencyAccumulation() {
 
     sqlite3* db;
     const int rc = sqlite3_open(":memory:", &db);
+    SqliteCloser closeDb{db};
     assert(rc == SQLITE_OK);
     (void)rc;
 
@@ -208,7 +219,6 @@ void testSQLiteFrequencyAccumulation() {
     assert(!suggestions.empty());
     assert(suggestions[0].frequency == 150);
 
-    sqlite3_close(db);
 
     std::cout << "PASSED" << std::endl;
 }
@@ -221,6 +231,7 @@ void testSQLitePersistence() {
     {
         sqlite3* db;
         const int rc = sqlite3_open(path, &db);
+        SqliteCloser closeDb{db};
         assert(rc == SQLITE_OK);
         (void)rc;
 
@@ -233,12 +244,12 @@ void testSQLitePersistence() {
         spell.createDictionaryEntry("persistent", 999);
         spell.createDictionaryEntry("word", 100);
 
-        sqlite3_close(db);
     }
 
     {
         sqlite3* db;
         const int rc = sqlite3_open(path, &db);
+        SqliteCloser closeDb{db};
         assert(rc == SQLITE_OK);
         (void)rc;
 
@@ -250,7 +261,6 @@ void testSQLitePersistence() {
         assert(!suggestions.empty());
         assert(suggestions[0].term == "persistent");
 
-        sqlite3_close(db);
     }
 
     std::remove(path);
